@@ -208,6 +208,8 @@
     <div class="chip on" data-f="todos">Todos</div>
     <div class="chip" data-f="disponible">Disponible</div>
     <div class="chip" data-f="vencido">Vencidos</div>
+    <div class="chip" data-f="stagingIn">Staging IN</div>
+    <div class="chip" data-f="stagingOut">Staging OUT</div>
     <div class="chip" data-f="ordUbic">Ordenar x ubicación</div>
     <div class="chip" data-f="ordProd">Ordenar x producto</div>
     <div class="chip" id="toggleUbicFilter">📍 Filtrar por ubicación</div>
@@ -575,6 +577,8 @@ function matchesLocFilter(item, naveQ, caraQ, colQ){
 function applyFilter(item){
   if(activeFilter === 'disponible' && !norm(item.estado).includes('disponible')) return false;
   if(activeFilter === 'vencido' && !isVencido(item.fvto)) return false;
+  if(activeFilter === 'stagingIn' && norm(item.ubicacion) !== 'staging in') return false;
+  if(activeFilter === 'stagingOut' && norm(item.ubicacion) !== 'staging out') return false;
   const naveQ = document.getElementById('stockNaveFilter').value.trim();
   const caraQ = document.getElementById('stockCaraFilter').value.trim();
   const colQ = document.getElementById('stockColFilter').value.trim();
