@@ -77,6 +77,19 @@
   .statusBar{display:flex; justify-content:space-between; align-items:center; margin:2px 2px 12px 2px;}
   .statusBar .count{font-size:12.5px; color:var(--sub);}
   .statusBar .count b{color:var(--text);}
+  #naveSummary{display:none; flex-wrap:wrap; gap:6px; margin:0 2px 12px 2px;}
+  #naveSummary.show{display:flex;}
+  #naveSummary .naveChip{
+    display:flex; align-items:center; gap:6px;
+    background:var(--panel2, #1e222b); border:1px solid var(--border, #2a2f3a);
+    border-radius:999px; padding:5px 10px; font-size:12px; color:var(--text, #eef1f6);
+  }
+  #naveSummary .naveChip b{color:var(--accent, #ff8a3d); font-family:var(--mono, monospace);}
+  #naveSummary .naveTotal{
+    display:flex; align-items:center; gap:6px;
+    background:transparent; border:1px dashed var(--border, #2a2f3a);
+    border-radius:999px; padding:5px 10px; font-size:12px; color:var(--sub, #9aa3b2);
+  }
   .sortBtn{font-size:12px; color:var(--accent2); background:none; border:none; cursor:pointer; padding:4px;}
 
   .empty{
@@ -232,6 +245,7 @@
   <div class="statusBar">
     <div class="count" id="countLabel"><b>0</b> resultados</div>
   </div>
+  <div id="naveSummary"></div>
   <div id="results"></div>
 </main>
 
@@ -623,15 +637,48 @@ function render(){
 
   countLabel.innerHTML = `<b>${filtered.length.toLocaleString('es-AR')}</b> resultados`;
 
+  const naveSummaryEl = document.getElementById('naveSummary');
+
   const hasLocFilter = stockNaveFilter.value.trim() || stockCaraFilter.value.trim() || stockColFilter.value.trim();
   if(!q && activeFilter === 'todos' && !hasLocFilter){
     resultsEl.innerHTML = `<div class="empty"><div class="big">📦</div>Buscá por lote, pallet, código,<br>producto o ubicación<div class="hint">Tip: tocá 📷 para escanear o 🔤 para leer una etiqueta</div></div>`;
+    naveSummaryEl.classList.remove('show');
+    naveSummaryEl.innerHTML = '';
     return;
   }
 
   if(filtered.length === 0){
     resultsEl.innerHTML = `<div class="empty"><div class="big">🤷</div>Sin resultados para esa búsqueda</div>`;
+    naveSummaryEl.classList.remove('show');
+    naveSummaryEl.innerHTML = '';
     return;
+  }
+
+  // Resumen de pallets por nave (solo tiene sentido cuando hay texto buscado, ej. un lote)
+  if(q){
+    const porNave = {};
+    filtered.forEach(it => {
+      const p = parseUbic(it.ubicacion);
+      const nave = (p && p.pasillo) ? p.pasillo : (it.ubicacion || 'Sin nave');
+      porNave[nave] = (porNave[nave] || 0) + 1;
+    });
+    const naves = Object.keys(porNave).sort((a,b) => {
+      const na = Number(a), nb = Number(b);
+      if(!isNaN(na) && !isNaN(nb)) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+    if(naves.length){
+      naveSummaryEl.innerHTML = naves.map(n =>
+        `<span class="naveChip">Nave <b>${n}</b> · ${porNave[n]} pallet${porNave[n] === 1 ? '' : 's'}</span>`
+      ).join('') + `<span class="naveTotal">Total: ${filtered.length} pallet${filtered.length === 1 ? '' : 's'}</span>`;
+      naveSummaryEl.classList.add('show');
+    } else {
+      naveSummaryEl.classList.remove('show');
+      naveSummaryEl.innerHTML = '';
+    }
+  } else {
+    naveSummaryEl.classList.remove('show');
+    naveSummaryEl.innerHTML = '';
   }
 
   const MAX_RENDER = 300;
