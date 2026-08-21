@@ -2,7 +2,618 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Control de Viajes — CD Zárate</title>
+<meta name="theme-color" content="#0f1115">
+<style>
+  :root{
+    --bg:#0f1115;
+    --panel:#171a21;
+    --panel2:#1e222b;
+    --border:#2a2f3a;
+    --text:#eef1f6;
+    --sub:#9aa3b2;
+    --accent:#ff8a3d;
+    --accent2:#2dd4bf;
+    --ok:#3ecf7a;
+    --warn:#f2c94c;
+    --danger:#ef5b5b;
+    --gray:#6b7280;
+    --mono: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;}
+  body{padding-bottom:60px;}
+  header{
+    position:sticky; top:0; z-index:20;
+    background:linear-gradient(180deg,#12141a 0%, #12141aee 85%, transparent 100%);
+    padding:14px 14px 10px 14px;
+    backdrop-filter: blur(6px);
+  }
+  .brand{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:2px;}
+  .brand h1{font-size:15px; margin:0; letter-spacing:0.3px; color:var(--text); font-weight:700;}
+  .brand h1 span{color:var(--accent);}
+  .brand .meta{font-size:10.5px; color:var(--sub); font-family:var(--mono);}
+  main{padding:12px 14px; max-width:1100px; margin:0 auto;}
+
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:14px;}
+  .card h2{font-size:13px; margin:0 0 10px 0; color:var(--text); font-weight:700;}
+  .card p.hint{font-size:11.5px; color:var(--sub); margin:4px 0 10px 0;}
+
+  .uploadRow{display:flex; gap:10px; flex-wrap:wrap;}
+  .uploadBox{flex:1; min-width:220px;}
+  .uploadBox label{display:block; font-size:11.5px; color:var(--sub); margin-bottom:6px;}
+  .fileBtn{
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    background:var(--panel2); border:1px dashed var(--border); border-radius:10px;
+    padding:10px 12px; cursor:pointer; font-size:12.5px; color:var(--text);
+  }
+  .fileBtn input{display:none;}
+  .fileBtn .status{color:var(--accent2); font-size:11px; font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;}
+  .fileBtn.loaded{border-style:solid; border-color:var(--ok);}
+
+  #viajeSelector{
+    width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--border);
+    background:var(--panel2); color:var(--text); font-size:13px; font-family:inherit;
+  }
+
+  .runBtn{
+    margin-top:14px; width:100%; padding:12px; border-radius:12px; border:none;
+    background:var(--accent); color:#1a1000; font-weight:700; font-size:13.5px; cursor:pointer;
+  }
+  .runBtn:disabled{background:var(--panel2); color:var(--sub); cursor:not-allowed;}
+
+  .cloudStatus{font-size:11px; color:var(--sub); margin-top:8px; font-family:var(--mono);}
+  .cloudStatus.ok{color:var(--ok);}
+  .cloudStatus.busy{color:var(--warn);}
+  .cloudStatus.err{color:var(--danger);}
+
+  .summaryRow{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;}
+  .pill{padding:6px 12px; border-radius:999px; font-size:11.5px; font-weight:700; font-family:var(--mono);}
+  .pill.ok{background:#123a25; color:var(--ok);}
+  .pill.warn{background:#3a3312; color:var(--warn);}
+  .pill.danger{background:#3a1717; color:var(--danger);}
+  .pill.gray{background:#22252c; color:var(--gray);}
+
+  table{width:100%; border-collapse:collapse; font-size:12px;}
+  th{text-align:left; padding:8px 6px; color:var(--sub); font-size:10.5px; text-transform:uppercase; letter-spacing:0.4px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--panel);}
+  td{padding:8px 6px; border-bottom:1px solid var(--border); vertical-align:top; font-family:var(--mono); font-size:11.5px;}
+  tr.row-ok td{background:rgba(62,207,122,0.06);}
+  tr.row-warn td{background:rgba(242,201,76,0.07);}
+  tr.row-danger td{background:rgba(239,91,91,0.08);}
+  tr.row-gray td{background:rgba(107,114,128,0.06);}
+  .tag{display:inline-block; padding:3px 8px; border-radius:999px; font-size:10px; font-weight:700;}
+  .tag.ok{background:var(--ok); color:#08201c;}
+  .tag.warn{background:var(--warn); color:#2a2103;}
+  .tag.danger{background:var(--danger); color:#2a0808;}
+  .tag.gray{background:var(--gray); color:#0d0f12;}
+  .motivo{color:var(--sub); font-size:10.5px; font-family:-apple-system,sans-serif; max-width:220px; display:block;}
+
+  .tableWrap{overflow-x:auto; border:1px solid var(--border); border-radius:12px;}
+
+  .actionsRow{display:flex; gap:8px; margin-top:12px;}
+  .actionsRow button{
+    flex:1; padding:10px; border-radius:10px; border:1px solid var(--border);
+    background:var(--panel2); color:var(--text); font-size:12px; cursor:pointer;
+  }
+  .actionsRow button.primary{background:var(--accent2); color:#08201c; border-color:var(--accent2); font-weight:700;}
+
+  .empty{color:var(--sub); font-size:12px; text-align:center; padding:30px 10px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Control de <span>Viajes</span> — CD Zárate</h1>
+  </div>
+  <div class="meta" id="cloudMeta">stock WMS: sin datos</div>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2>1. Cargar archivos del día</h2>
+    <p class="hint">El stock físico (WMS) se trae automáticamente desde la nube — es el mismo dato del Buscador de Stock. Solo subí la planilla de viajes y el export de SAP.</p>
+    <div class="uploadRow">
+      <div class="uploadBox">
+        <label>Planilla de Viajes (.xlsx)</label>
+        <div class="fileBtn" id="btnViajes">
+          <span>Elegir archivo</span>
+          <span class="status" id="statusViajes">—</span>
+        </div>
+        <input type="file" id="fileViajes" accept=".xlsx,.xls">
+      </div>
+      <div class="uploadBox">
+        <label>Stock SAP (.xlsx)</label>
+        <div class="fileBtn" id="btnSap">
+          <span>Elegir archivo</span>
+          <span class="status" id="statusSap">—</span>
+        </div>
+        <input type="file" id="fileSap" accept=".xlsx,.xls">
+      </div>
+    </div>
+    <div class="cloudStatus" id="cloudStatus">☁️ conectando con la nube del WMS...</div>
+    <button class="runBtn" id="runBtn" disabled>Cruzar y controlar viajes</button>
+  </div>
+
+  <div class="card" id="viajeSelectorCard" style="display:none;">
+    <h2>2. Elegí el viaje a revisar</h2>
+    <p class="hint">La planilla trae varios viajes (columna VIAJE). Elegí uno para controlar solo esos lotes.</p>
+    <select id="viajeSelector">
+      <option value="__ALL__">Todos los viajes</option>
+    </select>
+    <div class="summaryRow" id="viajeTotalesRow" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none;">
+    <h2>2. Resultado del control</h2>
+    <div class="summaryRow" id="summaryRow"></div>
+    <div class="tableWrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Viaje</th>
+            <th>Lote</th>
+            <th>Sugerencia FIFO</th>
+            <th>Artículo</th>
+            <th>Reserva</th>
+            <th>Litros req.</th>
+            <th>WMS</th>
+            <th>Nave</th>
+            <th>SAP almacén</th>
+            <th>Libre util.</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </div>
+    <div class="actionsRow">
+      <button class="primary" id="downloadBtn">⬇️ Descargar Excel</button>
+    </div>
+  </div>
+
+  <div class="card empty" id="emptyState">Subí la planilla de viajes y el stock SAP, después tocá "Cruzar y controlar viajes".</div>
+
+</main>
+
+<script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script>
+/* =========================================================
+   FIREBASE — misma base que el Buscador de Stock (solo lectura)
+   ========================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyCy6bKAvs4YlVM2aN_ahAW5OM2j0vtKx9o",
+  authDomain: "stock-zarate.firebaseapp.com",
+  databaseURL: "https://stock-zarate-default-rtdb.firebaseio.com",
+  projectId: "stock-zarate",
+  storageBucket: "stock-zarate.firebasestorage.app",
+  messagingSenderId: "939643509155",
+  appId: "1:939643509155:web:4ad531ab30aa351e1d6216"
+};
+let fbApp=null, fbDb=null, fbOk=false;
+try{ fbApp = firebase.initializeApp(firebaseConfig); fbDb = firebase.database(); fbOk = true; }catch(e){ fbOk=false; }
+
+let wmsStock = [];      // array de pallets del WMS (desde la nube)
+let allViajesRows = []; // TODAS las filas parseadas de la planilla (sin filtrar por viaje)
+let viajesRows = [];    // filas parseadas de la planilla de viajes (ya filtradas por el viaje elegido)
+let sapRows = [];       // filas parseadas del stock SAP
+
+function setCloud(msg, cls){
+  const el = document.getElementById('cloudStatus');
+  el.textContent = msg;
+  el.className = 'cloudStatus ' + (cls||'');
+}
+
+async function loadWmsFromCloud(){
+  if(!fbOk){ setCloud('⚠️ no se pudo conectar a la nube del WMS', 'err'); return; }
+  setCloud('☁️ sincronizando stock WMS...', 'busy');
+  try{
+    const snap = await fbDb.ref('stock').once('value');
+    const data = snap.val();
+    if(Array.isArray(data) && data.length){
+      wmsStock = data;
+      setCloud('☁️ stock WMS sincronizado — ' + wmsStock.length + ' registros', 'ok');
+      document.getElementById('cloudMeta').textContent = 'stock WMS: ' + wmsStock.length + ' registros (misma nube que el Buscador de Stock)';
+    } else {
+      setCloud('⚠️ la nube no tiene stock cargado todavía', 'err');
+    }
+  }catch(e){
+    setCloud('⚠️ error sincronizando: ' + e.message, 'err');
+  }
+  checkReady();
+}
+
+/* =========================================================
+   PARSERS
+   ========================================================= */
+function normLote(v){
+  let s = String(v==null ? '' : v).trim().toUpperCase();
+  if(/^\d+$/.test(s)){
+    s = s.replace(/^0+/, '') || '0'; // "026301" -> "26301" (nunca vacío)
+  }
+  return s;
+}
+
+function esStaging(ubicacion){
+  return String(ubicacion || '').toUpperCase().includes('STAGING');
+}
+
+function normCodigo(v){
+  let s = String(v==null ? '' : v).trim().toUpperCase();
+  if(/^\d+$/.test(s)){
+    s = s.replace(/^0+/, '') || '0';
+  }
+  return s;
+}
+
+// Convierte "DD/MM/YYYY" (formato que usa el buscador de stock) a timestamp comparable.
+// Fechas vacías o con formato desconocido van al final (se tratan como "sin dato").
+function fechaTs(v){
+  const s = String(v || '').trim();
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(!m) return Infinity;
+  const [, dd, mm, yyyy] = m;
+  return new Date(Number(yyyy), Number(mm)-1, Number(dd)).getTime();
+}
+
+// Busca un lote alternativo del mismo artículo, disponible, ordenado FIFO (por Fecha Alta más antigua)
+// que cubra la cantidad requerida. Excluye el lote que ya se controló.
+function sugerirLoteFifo(articulo, loteActual, requeridoUnidades, requeridoLitros, esperado){
+  const candidatos = wmsStock.filter(w =>
+    normCodigo(w.codigo) === normCodigo(articulo) &&
+    normLote(w.lote) !== loteActual &&
+    String(w.estado||'').toUpperCase().includes('DISPONIBLE') &&
+    !esStaging(w.ubicacion)
+  );
+  if(!candidatos.length) return null;
+
+  const porLote = {};
+  candidatos.forEach(w => {
+    const lote = normLote(w.lote);
+    if(!porLote[lote]) porLote[lote] = { lote, cantidad: 0, faltaMin: Infinity };
+    porLote[lote].cantidad += Number(w.unidades) || 0;
+    const ts = fechaTs(w.falta);
+    if(ts < porLote[lote].faltaMin) porLote[lote].faltaMin = ts;
+  });
+
+  // Suma la libre utilización en SAP (en el Centro/Almacén esperado) para cada lote candidato
+  Object.values(porLote).forEach(l => {
+    l.sapLibre = sapRows
+      .filter(s => s.lote === l.lote && s.centro === esperado.centro && s.almacen === esperado.almacen)
+      .reduce((acc,s) => acc + s.libreUtiliz, 0);
+  });
+
+  const lotes = Object.values(porLote).sort((a,b) => a.faltaMin - b.faltaMin); // FIFO: más antiguo primero
+  const completos = lotes.filter(l => l.cantidad >= requeridoUnidades && l.sapLibre >= requeridoLitros);
+  const soloWms = lotes.filter(l => l.cantidad >= requeridoUnidades);
+  return completos[0] || soloWms[0] || lotes[0] || null;
+}
+
+function parseViajesWorkbook(wb){
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  return rows.map(d => ({
+    cd: d['CD'] || '',
+    reserva: String(d['RESERVA'] || '').trim().toUpperCase(),
+    delivery: d['DELIVERY'] || '',
+    viaje: d['VIAJE'] || '',
+    nroAplica: d['NRO. APLICA'] || '',
+    articulo: String(d['ARTICULO'] ?? ''),
+    descripcion: d['DESCRIPCION'] || '',
+    lote: normLote(d['LOTE']),
+    unidades: d['UNIDADES'] !== '' ? Number(d['UNIDADES']) : 0,
+    litros: d['LITROS'] !== '' ? Number(d['LITROS']) : 0,
+  })).filter(r => r.lote);
+}
+
+function parseSapWorkbook(wb){
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  return rows.map(d => ({
+    material: String(d['Material'] ?? ''),
+    denominacion: d['Denominación'] || '',
+    centro: Number(d['Centro']),
+    almacen: Number(d['Almacén']),
+    lote: normLote(d['Lote']),
+    um: d['UM base'] || '',
+    libreUtiliz: Number(d['Libre utiliz.'] || 0) / 1000, // litros/unidades reales
+  })).filter(r => r.lote);
+}
+
+/* =========================================================
+   REGLA DE ALMACÉN ESPERADO SEGÚN RESERVA
+   (misma regla que la reconciliación WMS/SAP/Crono)
+   ========================================================= */
+function almacenEsperado(reserva){
+  if(reserva === 'SI') return { centro: 3099, almacen: 3031 };
+  return { centro: 3031, almacen: 1 }; // RESERVA = NO (default)
+}
+
+/* =========================================================
+   CRUCE
+   ========================================================= */
+function cruzar(){
+  const resultados = viajesRows.map(v => {
+    const esperado = almacenEsperado(v.reserva);
+
+    // --- WMS ---
+    const wmsMatches = wmsStock.filter(w => normLote(w.lote) === v.lote);
+    let wmsEstado = 'no_encontrado';
+    let wmsDetalle = 'Lote no está en el WMS';
+    let wmsNaves = '—';
+    if(wmsMatches.length){
+      const enStaging = wmsMatches.filter(w => esStaging(w.ubicacion));
+      const disponibles = wmsMatches.filter(w => String(w.estado||'').toUpperCase().includes('DISPONIBLE') && !esStaging(w.ubicacion));
+      const bloqueados = wmsMatches.filter(w => !esStaging(w.ubicacion) && !String(w.estado||'').toUpperCase().includes('DISPONIBLE'));
+      const sumDisponible = disponibles.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
+      const sumStaging = enStaging.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
+      const sumBloqueado = bloqueados.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
+      const requerido = Number(v.unidades) || 0;
+
+      if(sumDisponible >= requerido){
+        wmsEstado = 'disponible';
+        const notas = [];
+        if(sumBloqueado) notas.push(`${sumBloqueado} unid. bloqueadas en otro pallet`);
+        if(sumStaging) notas.push(`${sumStaging} unid. ya despachadas en Staging Out`);
+        wmsDetalle = notas.length
+          ? `${sumDisponible} disponibles (alcanza) — ${notas.join(', ')}, no afecta el viaje`
+          : `${sumDisponible} disponibles`;
+      } else {
+        wmsEstado = 'insuficiente';
+        const notas = [];
+        if(sumBloqueado) notas.push(`${sumBloqueado} unid. bloqueadas: ${bloqueados[0].estado}`);
+        if(sumStaging) notas.push(`${sumStaging} unid. ya despachadas en Staging Out (no cuentan)`);
+        wmsDetalle = `Solo ${sumDisponible} disponibles de ${requerido} requeridas` +
+          (notas.length ? ` (${notas.join(', ')})` : '');
+      }
+
+      // Nave: se calcula sobre todos los pallets del lote (disponibles + bloqueados), excluyendo STAGING
+      const naveCounts = {};
+      wmsMatches.forEach(w => {
+        const ubic = String(w.ubicacion || '');
+        const parts = ubic.split('-');
+        const nave = parts.length >= 3 ? parts[0] : ubic;
+        if(nave.toUpperCase().includes('STAGING')) return; // se excluye staging out/in del conteo por nave
+        naveCounts[nave] = (naveCounts[nave] || 0) + 1;
+      });
+      const naves = Object.keys(naveCounts).sort();
+      wmsNaves = naves.length ? naves.map(n => `${n} (${naveCounts[n]})`).join(', ') : '—';
+    }
+
+    // --- SAP ---
+    const sapEnAlmacenEsperado = sapRows.filter(s => s.lote === v.lote && s.centro === esperado.centro && s.almacen === esperado.almacen);
+    const sapEnOtroLado = sapRows.filter(s => s.lote === v.lote);
+    let sapEstado, sapDetalle, libreUtiliz = 0;
+
+    if(sapEnAlmacenEsperado.length){
+      libreUtiliz = sapEnAlmacenEsperado.reduce((acc,s)=>acc+s.libreUtiliz,0);
+      if(libreUtiliz >= v.litros){
+        sapEstado = 'ok';
+        sapDetalle = `Centro ${esperado.centro} / Almacén ${esperado.almacen}`;
+      } else {
+        sapEstado = 'insuficiente';
+        sapDetalle = `Centro ${esperado.centro} / Almacén ${esperado.almacen} — libre util. insuficiente`;
+      }
+    } else if(sapEnOtroLado.length){
+      libreUtiliz = sapEnOtroLado.reduce((acc,s)=>acc+s.libreUtiliz,0);
+      const otros = [...new Set(sapEnOtroLado.map(s=>`C${s.centro}/A${s.almacen}`))].join(', ');
+      sapEstado = 'almacen_incorrecto';
+      sapDetalle = `Está en ${otros}, se esperaba Centro ${esperado.centro} / Almacén ${esperado.almacen}`;
+    } else {
+      sapEstado = 'no_encontrado';
+      sapDetalle = 'Lote no está en SAP';
+    }
+
+    // --- Estado final (semáforo) ---
+    let nivel, motivo;
+    if(wmsEstado === 'no_encontrado' || sapEstado === 'no_encontrado'){
+      nivel = 'gray'; motivo = 'No encontrado en ' + (wmsEstado==='no_encontrado' ? 'WMS' : 'SAP');
+    } else if(wmsEstado === 'insuficiente' || sapEstado === 'almacen_incorrecto'){
+      nivel = 'danger';
+      motivo = wmsEstado === 'insuficiente' ? ('WMS: ' + wmsDetalle) : sapDetalle;
+    } else if(sapEstado === 'insuficiente'){
+      nivel = 'warn'; motivo = sapDetalle;
+    } else {
+      nivel = 'ok'; motivo = 'Lote disponible en WMS y en libre utilización en el almacén correcto';
+    }
+
+    // --- Sugerencia de lote alternativo (FIFO) cuando hay alerta, validado en WMS y SAP ---
+    let sugerencia = null;
+    if(nivel === 'danger' || nivel === 'warn'){
+      const reqUnidades = Number(v.unidades) || 0;
+      const reqLitros = Number(v.litros) || 0;
+      const alt = sugerirLoteFifo(v.articulo, v.lote, reqUnidades, reqLitros, esperado);
+      if(alt){
+        const cubreWms = alt.cantidad >= reqUnidades;
+        const cubreSap = alt.sapLibre >= reqLitros;
+        if(cubreWms && cubreSap){
+          sugerencia = `Lote ${alt.lote} (${alt.cantidad} disp. WMS, ${alt.sapLibre.toFixed(0)} libre util. SAP — cubre el viaje)`;
+        } else if(cubreWms && !cubreSap){
+          sugerencia = `Lote ${alt.lote} (${alt.cantidad} disp. WMS, pero libre util. SAP insuficiente: ${alt.sapLibre.toFixed(0)})`;
+        } else {
+          sugerencia = `Lote ${alt.lote} (${alt.cantidad} disp., no cubre todo)`;
+        }
+      } else {
+        sugerencia = 'Sin alternativa disponible en WMS';
+      }
+    }
+
+    return { ...v, esperado, wmsEstado, wmsDetalle, wmsNaves, sapEstado, sapDetalle, libreUtiliz, nivel, motivo, sugerencia };
+  });
+  return resultados;
+}
+
+/* =========================================================
+   RENDER
+   ========================================================= */
+function tagFor(nivel){
+  const map = { ok:['OK','ok'], warn:['REVISAR','warn'], danger:['ALERTA','danger'], gray:['S/D','gray'] };
+  const [label,cls] = map[nivel];
+  return `<span class="tag ${cls}">${label}</span>`;
+}
+
+function render(resultados){
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('resultsCard').style.display = 'block';
+
+  const counts = { ok:0, warn:0, danger:0, gray:0 };
+  resultados.forEach(r => counts[r.nivel]++);
+  document.getElementById('summaryRow').innerHTML = `
+    <span class="pill ok">✔ OK: ${counts.ok}</span>
+    <span class="pill warn">⚠ Revisar: ${counts.warn}</span>
+    <span class="pill danger">✖ Alerta: ${counts.danger}</span>
+    <span class="pill gray">? Sin dato: ${counts.gray}</span>
+  `;
+
+  const body = document.getElementById('resultsBody');
+  body.innerHTML = resultados.map(r => `
+    <tr class="row-${r.nivel}">
+      <td>${r.viaje}</td>
+      <td>${r.lote}</td>
+      <td>${r.sugerencia ? `<span class="motivo" style="color:var(--accent2);">${r.sugerencia}</span>` : '—'}</td>
+      <td>${r.articulo}<br><span class="motivo">${r.descripcion}</span></td>
+      <td>${r.reserva}</td>
+      <td>${r.litros}</td>
+      <td>${r.wmsEstado === 'disponible' ? 'Disponible' : (r.wmsEstado==='insuficiente' ? 'Insuficiente' : 'No encontrado')}</td>
+      <td>${r.wmsNaves}</td>
+      <td>C${r.esperado.centro}/A${r.esperado.almacen}</td>
+      <td>${r.libreUtiliz.toFixed(0)}</td>
+      <td>${tagFor(r.nivel)}<br><span class="motivo">${r.motivo}</span></td>
+    </tr>
+  `).join('');
+
+  window.__ultimoResultado = resultados;
+}
+
+/* =========================================================
+   DESCARGA EXCEL
+   ========================================================= */
+function descargarExcel(){
+  const resultados = window.__ultimoResultado || [];
+  const data = resultados.map(r => ({
+    'Viaje': r.viaje,
+    'Delivery': r.delivery,
+    'Lote': r.lote,
+    'Artículo': r.articulo,
+    'Descripción': r.descripcion,
+    'Reserva': r.reserva,
+    'Litros requeridos': r.litros,
+    'Unidades': r.unidades,
+    'WMS estado': r.wmsEstado,
+    'WMS detalle': r.wmsDetalle,
+    'Nave': r.wmsNaves,
+    'Centro esperado': r.esperado.centro,
+    'Almacén esperado': r.esperado.almacen,
+    'SAP libre utilización': r.libreUtiliz,
+    'SAP detalle': r.sapDetalle,
+    'Resultado': r.nivel.toUpperCase(),
+    'Motivo': r.motivo,
+    'Sugerencia FIFO': r.sugerencia || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Control Viajes');
+  const fecha = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `control_viajes_${fecha}.xlsx`);
+}
+
+/* =========================================================
+   UI WIRING
+   ========================================================= */
+function checkReady(){
+  document.getElementById('runBtn').disabled = !(viajesRows.length && sapRows.length && wmsStock.length);
+}
+
+document.getElementById('btnViajes').addEventListener('click', () => document.getElementById('fileViajes').click());
+document.getElementById('btnSap').addEventListener('click', () => document.getElementById('fileSap').click());
+
+document.getElementById('fileViajes').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates:true });
+  allViajesRows = parseViajesWorkbook(wb);
+  viajesRows = allViajesRows;
+  document.getElementById('statusViajes').textContent = allViajesRows.length + ' filas';
+  document.getElementById('btnViajes').classList.add('loaded');
+  poblarSelectorViaje();
+  checkReady();
+});
+
+function poblarSelectorViaje(){
+  const sel = document.getElementById('viajeSelector');
+  const viajesUnicos = [...new Set(allViajesRows.map(v => String(v.viaje || '').trim()).filter(Boolean))]
+    .sort((a,b) => {
+      const na = Number(a), nb = Number(b);
+      if(!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.localeCompare(b);
+    });
+  sel.innerHTML = `<option value="__ALL__">Todos los viajes (${allViajesRows.length} filas)</option>` +
+    viajesUnicos.map(v => {
+      const cant = allViajesRows.filter(r => String(r.viaje || '').trim() === v).length;
+      return `<option value="${v}">Viaje ${v} (${cant} lote${cant===1?'':'s'})</option>`;
+    }).join('');
+  document.getElementById('viajeSelectorCard').style.display = 'block';
+  aplicarFiltroViaje();
+}
+
+function aplicarFiltroViaje(){
+  const sel = document.getElementById('viajeSelector');
+  const val = sel.value;
+  viajesRows = (val === '__ALL__')
+    ? allViajesRows
+    : allViajesRows.filter(v => String(v.viaje || '').trim() === val);
+  document.getElementById('statusViajes').textContent = viajesRows.length + ' de ' + allViajesRows.length + ' filas';
+
+  const totLitros = viajesRows.reduce((acc, r) => acc + (Number(r.litros) || 0), 0);
+  const totUnidades = viajesRows.reduce((acc, r) => acc + (Number(r.unidades) || 0), 0);
+  const totLotes = new Set(viajesRows.map(r => r.lote)).size;
+  document.getElementById('viajeTotalesRow').innerHTML = `
+    <span class="pill gray">${viajesRows.length} línea${viajesRows.length===1?'':'s'}</span>
+    <span class="pill gray">${totLotes} lote${totLotes===1?'':'s'}</span>
+    <span class="pill gray">${totUnidades.toLocaleString('es-AR')} unidades</span>
+    <span class="pill gray">${totLitros.toLocaleString('es-AR')} litros</span>
+  `;
+
+  // si ya había un resultado en pantalla, lo ocultamos hasta volver a cruzar
+  document.getElementById('resultsCard').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'block';
+  checkReady();
+}
+
+document.getElementById('viajeSelector').addEventListener('change', aplicarFiltroViaje);
+
+document.getElementById('fileSap').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates:true });
+  sapRows = parseSapWorkbook(wb);
+  document.getElementById('statusSap').textContent = sapRows.length + ' registros';
+  document.getElementById('btnSap').classList.add('loaded');
+  checkReady();
+});
+
+document.getElementById('runBtn').addEventListener('click', () => {
+  const resultados = cruzar();
+  render(resultados);
+});
+
+document.getElementById('downloadBtn').addEventListener('click', descargarExcel);
+
+loadWmsFromCloud();
+</script>
+</body>
+</html>
+" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Control de Viajes — CD Zárate</title>
 <meta name="theme-color" content="#0f1115">
 <style>
