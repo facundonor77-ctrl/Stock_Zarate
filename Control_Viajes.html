@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -155,6 +154,7 @@
         <thead>
           <tr>
             <th>Viaje</th>
+            <th>Delivery</th>
             <th>Lote</th>
             <th>Sugerencia FIFO</th>
             <th>Artículo</th>
@@ -475,17 +475,20 @@ function render(resultados){
 
   const counts = { ok:0, warn:0, danger:0, gray:0 };
   resultados.forEach(r => counts[r.nivel]++);
+  const totLitrosResultado = resultados.reduce((acc, r) => acc + (Number(r.litros) || 0), 0);
   document.getElementById('summaryRow').innerHTML = `
     <span class="pill ok">✔ OK: ${counts.ok}</span>
     <span class="pill warn">⚠ Revisar: ${counts.warn}</span>
     <span class="pill danger">✖ Alerta: ${counts.danger}</span>
     <span class="pill gray">? Sin dato: ${counts.gray}</span>
+    <span class="pill gray">Σ ${totLitrosResultado.toLocaleString('es-AR')} litros</span>
   `;
 
   const body = document.getElementById('resultsBody');
   body.innerHTML = resultados.map(r => `
     <tr class="row-${r.nivel}">
       <td>${r.viaje}</td>
+      <td>${r.delivery}</td>
       <td>${r.lote}</td>
       <td>${r.sugerencia ? `<span class="motivo" style="color:${r.sugerencia.startsWith('Backup:') ? 'var(--sub)' : 'var(--accent2)'};">${r.sugerencia}</span>` : '—'}</td>
       <td>${r.articulo}<br><span class="motivo">${r.descripcion}</span></td>
