@@ -137,6 +137,27 @@
     <button class="runBtn" id="runBtn" disabled>Cruzar y controlar viajes</button>
   </div>
 
+  <div class="card" id="deliverySearchCard" style="display:none;">
+    <h2>Buscar por Delivery</h2>
+    <p class="hint">Útil cuando una línea aparece sin número de viaje: buscá por delivery y encontrá el lote asociado.</p>
+    <input type="text" id="deliverySearchInput" placeholder="Escribí el número de delivery..." style="width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--text); font-size:13px; font-family:var(--mono);">
+    <div class="tableWrap" id="deliverySearchWrap" style="display:none; margin-top:10px;">
+      <table>
+        <thead>
+          <tr>
+            <th>Viaje</th>
+            <th>Delivery</th>
+            <th>Lote</th>
+            <th>Artículo</th>
+            <th>Litros</th>
+          </tr>
+        </thead>
+        <tbody id="deliverySearchBody"></tbody>
+      </table>
+    </div>
+    <div id="deliverySearchEmpty" class="hint" style="display:none; margin-top:8px;">Sin resultados para ese delivery.</div>
+  </div>
+
   <div class="card" id="viajeSelectorCard" style="display:none;">
     <h2>2. Elegí el viaje a revisar</h2>
     <p class="hint">La planilla trae varios viajes (columna VIAJE). Elegí uno para controlar solo esos lotes.</p>
@@ -574,8 +595,46 @@ function poblarSelectorViaje(){
       return `<option value="${v}">Viaje ${v} (${cant} lote${cant===1?'':'s'})</option>`;
     }).join('');
   document.getElementById('viajeSelectorCard').style.display = 'block';
+  document.getElementById('deliverySearchCard').style.display = 'block';
   aplicarFiltroViaje();
 }
+
+function buscarPorDelivery(){
+  const q = document.getElementById('deliverySearchInput').value.trim().toUpperCase();
+  const wrap = document.getElementById('deliverySearchWrap');
+  const empty = document.getElementById('deliverySearchEmpty');
+  const body = document.getElementById('deliverySearchBody');
+
+  if(!q){
+    wrap.style.display = 'none';
+    empty.style.display = 'none';
+    body.innerHTML = '';
+    return;
+  }
+
+  const matches = allViajesRows.filter(v => String(v.delivery || '').toUpperCase().includes(q));
+
+  if(!matches.length){
+    wrap.style.display = 'none';
+    empty.style.display = 'block';
+    body.innerHTML = '';
+    return;
+  }
+
+  empty.style.display = 'none';
+  wrap.style.display = 'block';
+  body.innerHTML = matches.map(v => `
+    <tr>
+      <td>${v.viaje || '—'}</td>
+      <td>${v.delivery || '—'}</td>
+      <td>${v.lote}</td>
+      <td>${v.articulo}<br><span class="motivo">${v.descripcion}</span></td>
+      <td>${v.litros}</td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('deliverySearchInput').addEventListener('input', buscarPorDelivery);
 
 function aplicarFiltroViaje(){
   const sel = document.getElementById('viajeSelector');
