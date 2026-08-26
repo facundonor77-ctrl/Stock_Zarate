@@ -148,8 +148,15 @@
             <th>Viaje</th>
             <th>Delivery</th>
             <th>Lote</th>
+            <th>Sugerencia FIFO</th>
             <th>Artículo</th>
-            <th>Litros</th>
+            <th>Reserva</th>
+            <th>Litros req.</th>
+            <th>WMS</th>
+            <th>Nave</th>
+            <th>SAP almacén</th>
+            <th>Libre util.</th>
+            <th>Estado</th>
           </tr>
         </thead>
         <tbody id="deliverySearchBody"></tbody>
@@ -365,8 +372,9 @@ function almacenEsperado(reserva){
 /* =========================================================
    CRUCE
    ========================================================= */
-function cruzar(){
-  const resultados = viajesRows.map(v => {
+function cruzar(filas){
+  const base = filas || viajesRows;
+  const resultados = base.map(v => {
     const esperado = almacenEsperado(v.reserva);
 
     // --- WMS ---
@@ -621,15 +629,43 @@ function buscarPorDelivery(){
     return;
   }
 
+  // Se cruzan estas filas contra WMS/SAP igual que en el resultado principal,
+  // sin importar en qué viaje estén (útil cuando la línea no tiene viaje asignado).
+  const resultados = wmsStock.length && sapRows.length ? cruzar(matches) : null;
+
   empty.style.display = 'none';
   wrap.style.display = 'block';
-  body.innerHTML = matches.map(v => `
-    <tr>
-      <td>${v.viaje || '—'}</td>
-      <td>${v.delivery || '—'}</td>
-      <td>${v.lote}</td>
-      <td>${v.articulo}<br><span class="motivo">${v.descripcion}</span></td>
-      <td>${v.litros}</td>
+
+  if(!resultados){
+    body.innerHTML = matches.map(v => `
+      <tr>
+        <td>${v.viaje || '—'}</td>
+        <td>${v.delivery || '—'}</td>
+        <td>${v.lote}</td>
+        <td>—</td>
+        <td>${v.articulo}<br><span class="motivo">${v.descripcion}</span></td>
+        <td>${v.reserva}</td>
+        <td>${v.litros}</td>
+        <td colspan="5" class="motivo">Cargá WMS y SAP para ver el cruce completo</td>
+      </tr>
+    `).join('');
+    return;
+  }
+
+  body.innerHTML = resultados.map(r => `
+    <tr class="row-${r.nivel}">
+      <td>${r.viaje || '—'}</td>
+      <td>${r.delivery || '—'}</td>
+      <td>${r.lote}</td>
+      <td>${r.sugerencia ? `<span class="motivo" style="color:${r.sugerencia.startsWith('Backup:') ? 'var(--sub)' : 'var(--accent2)'};">${r.sugerencia}</span>` : '—'}</td>
+      <td>${r.articulo}<br><span class="motivo">${r.descripcion}</span></td>
+      <td>${r.reserva}</td>
+      <td>${r.litros}</td>
+      <td>${r.wmsEstado === 'disponible' ? 'Disponible' : (r.wmsEstado==='insuficiente' ? 'Insuficiente' : 'No encontrado')}</td>
+      <td>${r.wmsNaves}</td>
+      <td>C${r.esperado.centro}/A${r.esperado.almacen}</td>
+      <td>${r.libreUtiliz.toFixed(0)}</td>
+      <td>${tagFor(r.nivel)}<br><span class="motivo">${r.motivo}</span></td>
     </tr>
   `).join('');
 }
