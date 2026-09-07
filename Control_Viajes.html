@@ -428,6 +428,7 @@ function parseCronoWorkbook(wb){
       descripcion: d['Descr. Material'] || '',
       cantidad: Number(d['Cant.']) || 0,
       um: d['UM'] || '',
+      viaje: extraerEntregaNum(d['Doc. Transporte']), // el CRONO trae su propio Nº de viaje (Doc. Transporte)
     }))
     .filter(r => r.entrega && r.material);
 }
@@ -438,7 +439,18 @@ function parseCronoWorkbook(wb){
 let cronoRows = [];
 
 function cruzarCrono(){
-  // Mapa Entrega -> viajes (para poder filtrar/mostrar a qué viaje pertenece cada entrega del CRONO)
+  // Mapa Entrega -> viaje según el propio CRONO (Doc. Transporte) — fuente principal,
+  // porque siempre viene cargada en el CRONO aunque la planilla de viajes tenga el
+  // campo VIAJE vacío para esa línea.
+  const cronoViajeMap = {};
+  cronoRows.forEach(r => {
+    if(!r.viaje) return;
+    if(!cronoViajeMap[r.entrega]) cronoViajeMap[r.entrega] = new Set();
+    cronoViajeMap[r.entrega].add(r.viaje);
+  });
+
+  // Mapa Entrega -> viajes según la planilla de viajes — se usa como respaldo para
+  // las entregas que no están en el CRONO (no hay Doc. Transporte para esas).
   const entregaViajeMap = {};
   allViajesRows.forEach(v => {
     const entrega = extraerEntregaNum(v.delivery);
@@ -475,7 +487,8 @@ function cruzarCrono(){
     const [entrega, material] = key.split('|');
     const cantCrono = c ? c.cantidad : null;
     const cantViajes = v ? v.cantidad : null;
-    const viajesDeEstaEntrega = entregaViajeMap[entrega] ? [...entregaViajeMap[entrega]].sort() : [];
+    const viajesDeEstaEntrega = cronoViajeMap[entrega] ? [...cronoViajeMap[entrega]].sort()
+      : (entregaViajeMap[entrega] ? [...entregaViajeMap[entrega]].sort() : []);
     let nivel, estado;
     if(c && !v){
       nivel = 'warn'; estado = 'Falta en Viajes/WMS';
