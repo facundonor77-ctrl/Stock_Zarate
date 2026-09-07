@@ -205,6 +205,46 @@
 
   <div class="card empty" id="emptyState">Subí la planilla de viajes y el stock SAP, después tocá "Cruzar y controlar viajes".</div>
 
+  <div class="card" id="cronoCard">
+    <h2>3. Control CRONO vs Viajes (Material y Cantidad)</h2>
+    <p class="hint">Control diario aparte: cruza el archivo del 4PL (CRONO / ZA02) contra la planilla de viajes ya cargada arriba, por Entrega+Material, para detectar entregas que no coinciden en material o cantidad. No usa SAP ni el stock WMS.</p>
+    <div class="uploadRow">
+      <div class="uploadBox">
+        <label>Archivo CRONO / ZA02 (.xlsx)</label>
+        <div class="fileBtn" id="btnCrono">
+          <span>Elegir archivo</span>
+          <span class="status" id="statusCrono">—</span>
+        </div>
+        <input type="file" id="fileCrono" accept=".xlsx,.xls">
+      </div>
+    </div>
+    <button class="runBtn" id="runCronoBtn" disabled>Cruzar CRONO vs Viajes</button>
+
+    <div id="cronoResultsWrap" style="display:none; margin-top:14px;">
+      <div class="summaryRow" id="cronoSummaryRow"></div>
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Entrega</th>
+              <th>Material</th>
+              <th>Descripción</th>
+              <th>Cant. CRONO</th>
+              <th>Cant. Viajes</th>
+              <th>Diferencia</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="cronoResultsBody"></tbody>
+        </table>
+      </div>
+      <div class="actionsRow">
+        <button class="primary" id="downloadCronoBtn">⬇️ Descargar Excel</button>
+      </div>
+    </div>
+    <div class="hint" id="cronoEmpty" style="margin-top:10px;">Subí la planilla de viajes (arriba) y el archivo CRONO, después tocá "Cruzar CRONO vs Viajes".</div>
+  </div>
+
 </main>
 
 <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -358,6 +398,142 @@ function parseSapWorkbook(wb){
     um: d['UM base'] || '',
     libreUtiliz: Number(d['Libre utiliz.'] || 0) / 1000, // litros/unidades reales
   })).filter(r => r.lote);
+}
+
+/* =========================================================
+   PARSER CRONO / ZA02
+   ========================================================= */
+function extraerEntregaNum(v){
+  const s = String(v == null ? '' : v).trim();
+  const m = s.match(/(\d+)/);
+  return m ? m[1] : '';
+}
+
+function parseCronoWorkbook(wb){
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  return rows
+    .filter(d => d['Entrega'] !== '' && d['Entrega'] != null) // descarta filas "Total ..." / "Total general"
+    .map(d => ({
+      entrega: extraerEntregaNum(d['Entrega']),
+      material: normCodigo(d['Material']),
+      descripcion: d['Descr. Material'] || '',
+      cantidad: Number(d['Cant.']) || 0,
+      um: d['UM'] || '',
+    }))
+    .filter(r => r.entrega && r.material);
+}
+
+/* =========================================================
+   CRUCE CRONO vs VIAJES (Entrega+Material+Cantidad)
+   ========================================================= */
+let cronoRows = [];
+
+function cruzarCrono(){
+  // Agrupa CRONO por Entrega+Material
+  const cronoAgrup = {};
+  cronoRows.forEach(r => {
+    const key = r.entrega + '|' + r.material;
+    if(!cronoAgrup[key]) cronoAgrup[key] = { entrega: r.entrega, material: r.material, descripcion: r.descripcion, um: r.um, cantidad: 0 };
+    cronoAgrup[key].cantidad += r.cantidad;
+  });
+
+  // Agrupa Viajes (todas las filas cargadas, sin filtrar por viaje) por Delivery+Artículo
+  const viajesAgrup = {};
+  allViajesRows.forEach(v => {
+    const material = normCodigo(v.articulo);
+    const entrega = extraerEntregaNum(v.delivery);
+    if(!entrega || !material) return;
+    const key = entrega + '|' + material;
+    if(!viajesAgrup[key]) viajesAgrup[key] = { cantidad: 0, descripcion: v.descripcion };
+    viajesAgrup[key].cantidad += Number(v.litros) || 0;
+  });
+
+  const keys = new Set([...Object.keys(cronoAgrup), ...Object.keys(viajesAgrup)]);
+  const resultados = [];
+  keys.forEach(key => {
+    const c = cronoAgrup[key];
+    const v = viajesAgrup[key];
+    const [entrega, material] = key.split('|');
+    const cantCrono = c ? c.cantidad : null;
+    const cantViajes = v ? v.cantidad : null;
+    let nivel, estado;
+    if(c && !v){
+      nivel = 'warn'; estado = 'Falta en Viajes/WMS';
+    } else if(!c && v){
+      nivel = 'gray'; estado = 'No presente en CRONO';
+    } else {
+      const diff = Math.round((cantCrono - cantViajes) * 100) / 100;
+      if(Math.abs(diff) > 0.05){ nivel = 'danger'; estado = 'Diferencia de cantidad'; }
+      else { nivel = 'ok'; estado = 'OK'; }
+    }
+    resultados.push({
+      entrega, material,
+      descripcion: (c && c.descripcion) || (v && v.descripcion) || '',
+      cantCrono, cantViajes,
+      diferencia: (cantCrono != null && cantViajes != null) ? Math.round((cantCrono - cantViajes) * 100) / 100 : null,
+      nivel, estado,
+    });
+  });
+
+  const orden = { warn: 0, danger: 1, gray: 2, ok: 3 };
+  resultados.sort((a,b) => (orden[a.nivel] - orden[b.nivel]) || a.entrega.localeCompare(b.entrega));
+  return resultados;
+}
+
+function renderCrono(resultados){
+  document.getElementById('cronoEmpty').style.display = 'none';
+  document.getElementById('cronoResultsWrap').style.display = 'block';
+
+  const counts = { ok:0, warn:0, danger:0, gray:0 };
+  resultados.forEach(r => counts[r.nivel]++);
+  document.getElementById('cronoSummaryRow').innerHTML = `
+    <span class="pill ok">✔ OK: ${counts.ok}</span>
+    <span class="pill warn">⚠ Falta en Viajes/WMS: ${counts.warn}</span>
+    <span class="pill danger">✖ Diferencia cantidad: ${counts.danger}</span>
+    <span class="pill gray">? No en CRONO: ${counts.gray}</span>
+  `;
+
+  const fmt = n => n == null ? '—' : n.toLocaleString('es-AR');
+  const cronoTag = { ok:['OK','ok'], warn:['FALTA WMS','warn'], danger:['DIFERENCIA','danger'], gray:['S/D','gray'] };
+  document.getElementById('cronoResultsBody').innerHTML = resultados.map(r => {
+    const [label, cls] = cronoTag[r.nivel];
+    return `
+    <tr class="row-${r.nivel}">
+      <td>${r.entrega}</td>
+      <td>${r.material}</td>
+      <td>${r.descripcion}</td>
+      <td>${fmt(r.cantCrono)}</td>
+      <td>${fmt(r.cantViajes)}</td>
+      <td>${r.diferencia == null ? '—' : r.diferencia}</td>
+      <td><span class="tag ${cls}">${label}</span><br><span class="motivo">${r.estado}</span></td>
+    </tr>
+  `;
+  }).join('');
+
+  window.__ultimoResultadoCrono = resultados;
+}
+
+function descargarExcelCrono(){
+  const resultados = window.__ultimoResultadoCrono || [];
+  const data = resultados.map(r => ({
+    'Entrega': r.entrega,
+    'Material': r.material,
+    'Descripción': r.descripcion,
+    'Cant. CRONO': r.cantCrono,
+    'Cant. Viajes (WMS)': r.cantViajes,
+    'Diferencia': r.diferencia,
+    'Estado': r.estado,
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Control CRONO vs Viajes');
+  const fecha = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `control_crono_vs_viajes_${fecha}.xlsx`);
+}
+
+function checkReadyCrono(){
+  document.getElementById('runCronoBtn').disabled = !(cronoRows.length && allViajesRows.length);
 }
 
 /* =========================================================
@@ -587,6 +763,7 @@ document.getElementById('fileViajes').addEventListener('change', async (e) => {
   document.getElementById('btnViajes').classList.add('loaded');
   poblarSelectorViaje();
   checkReady();
+  checkReadyCrono();
 });
 
 function poblarSelectorViaje(){
@@ -715,6 +892,26 @@ document.getElementById('runBtn').addEventListener('click', () => {
 });
 
 document.getElementById('downloadBtn').addEventListener('click', descargarExcel);
+
+document.getElementById('btnCrono').addEventListener('click', () => document.getElementById('fileCrono').click());
+
+document.getElementById('fileCrono').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if(!file) return;
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates:true });
+  cronoRows = parseCronoWorkbook(wb);
+  document.getElementById('statusCrono').textContent = cronoRows.length + ' filas';
+  document.getElementById('btnCrono').classList.add('loaded');
+  checkReadyCrono();
+});
+
+document.getElementById('runCronoBtn').addEventListener('click', () => {
+  const resultados = cruzarCrono();
+  renderCrono(resultados);
+});
+
+document.getElementById('downloadCronoBtn').addEventListener('click', descargarExcelCrono);
 
 loadWmsFromCloud();
 </script>
