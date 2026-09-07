@@ -220,12 +220,20 @@
     </div>
     <button class="runBtn" id="runCronoBtn" disabled>Cruzar CRONO vs Viajes</button>
 
+    <div id="cronoViajeSelectorWrap" style="display:none; margin-top:12px;">
+      <label style="display:block; font-size:11.5px; color:var(--sub); margin-bottom:6px;">Filtrar por viaje</label>
+      <select id="cronoViajeSelector">
+        <option value="__ALL__">Todos los viajes</option>
+      </select>
+    </div>
+
     <div id="cronoResultsWrap" style="display:none; margin-top:14px;">
       <div class="summaryRow" id="cronoSummaryRow"></div>
       <div class="tableWrap">
         <table>
           <thead>
             <tr>
+              <th>Viaje</th>
               <th>Entrega</th>
               <th>Material</th>
               <th>Descripción</th>
@@ -430,6 +438,16 @@ function parseCronoWorkbook(wb){
 let cronoRows = [];
 
 function cruzarCrono(){
+  // Mapa Entrega -> viajes (para poder filtrar/mostrar a qué viaje pertenece cada entrega del CRONO)
+  const entregaViajeMap = {};
+  allViajesRows.forEach(v => {
+    const entrega = extraerEntregaNum(v.delivery);
+    const viaje = String(v.viaje || '').trim();
+    if(!entrega || !viaje) return;
+    if(!entregaViajeMap[entrega]) entregaViajeMap[entrega] = new Set();
+    entregaViajeMap[entrega].add(viaje);
+  });
+
   // Agrupa CRONO por Entrega+Material
   const cronoAgrup = {};
   cronoRows.forEach(r => {
@@ -457,6 +475,7 @@ function cruzarCrono(){
     const [entrega, material] = key.split('|');
     const cantCrono = c ? c.cantidad : null;
     const cantViajes = v ? v.cantidad : null;
+    const viajesDeEstaEntrega = entregaViajeMap[entrega] ? [...entregaViajeMap[entrega]].sort() : [];
     let nivel, estado;
     if(c && !v){
       nivel = 'warn'; estado = 'Falta en Viajes/WMS';
@@ -468,7 +487,7 @@ function cruzarCrono(){
       else { nivel = 'ok'; estado = 'OK'; }
     }
     resultados.push({
-      entrega, material,
+      entrega, material, viajes: viajesDeEstaEntrega,
       descripcion: (c && c.descripcion) || (v && v.descripcion) || '',
       cantCrono, cantViajes,
       diferencia: (cantCrono != null && cantViajes != null) ? Math.round((cantCrono - cantViajes) * 100) / 100 : null,
@@ -498,8 +517,10 @@ function renderCrono(resultados){
   const cronoTag = { ok:['OK','ok'], warn:['FALTA WMS','warn'], danger:['DIFERENCIA','danger'], gray:['S/D','gray'] };
   document.getElementById('cronoResultsBody').innerHTML = resultados.map(r => {
     const [label, cls] = cronoTag[r.nivel];
+    const viajeTxt = r.viajes && r.viajes.length ? r.viajes.join(', ') : '—';
     return `
     <tr class="row-${r.nivel}">
+      <td>${viajeTxt}</td>
       <td>${r.entrega}</td>
       <td>${r.material}</td>
       <td>${r.descripcion}</td>
@@ -514,9 +535,39 @@ function renderCrono(resultados){
   window.__ultimoResultadoCrono = resultados;
 }
 
+function poblarSelectorCrono(resultadosCompletos){
+  const sel = document.getElementById('cronoViajeSelector');
+  const viajesUnicos = [...new Set(resultadosCompletos.flatMap(r => r.viajes || []))]
+    .sort((a,b) => {
+      const na = Number(a), nb = Number(b);
+      if(!isNaN(na) && !isNaN(nb)) return na - nb;
+      return a.localeCompare(b);
+    });
+  sel.innerHTML = `<option value="__ALL__">Todos los viajes</option>` +
+    viajesUnicos.map(v => `<option value="${v}">Viaje ${v}</option>`).join('') +
+    `<option value="__SIN_VIAJE__">Sin viaje / entrega no encontrada en planilla</option>`;
+  document.getElementById('cronoViajeSelectorWrap').style.display = 'block';
+}
+
+function aplicarFiltroCrono(){
+  const sel = document.getElementById('cronoViajeSelector');
+  const val = sel.value;
+  const completos = window.__cronoResultadosCompletos || [];
+  let filtrados = completos;
+  if(val === '__SIN_VIAJE__'){
+    filtrados = completos.filter(r => !r.viajes || !r.viajes.length);
+  } else if(val !== '__ALL__'){
+    filtrados = completos.filter(r => (r.viajes || []).includes(val));
+  }
+  renderCrono(filtrados);
+}
+
+document.getElementById('cronoViajeSelector').addEventListener('change', aplicarFiltroCrono);
+
 function descargarExcelCrono(){
   const resultados = window.__ultimoResultadoCrono || [];
   const data = resultados.map(r => ({
+    'Viaje': r.viajes && r.viajes.length ? r.viajes.join(', ') : '',
     'Entrega': r.entrega,
     'Material': r.material,
     'Descripción': r.descripcion,
@@ -908,6 +959,9 @@ document.getElementById('fileCrono').addEventListener('change', async (e) => {
 
 document.getElementById('runCronoBtn').addEventListener('click', () => {
   const resultados = cruzarCrono();
+  window.__cronoResultadosCompletos = resultados;
+  poblarSelectorCrono(resultados);
+  document.getElementById('cronoViajeSelector').value = '__ALL__';
   renderCrono(resultados);
 });
 
