@@ -475,8 +475,9 @@ function cruzarCrono(){
     const entrega = extraerEntregaNum(v.delivery);
     if(!entrega || !material) return;
     const key = entrega + '|' + material;
-    if(!viajesAgrup[key]) viajesAgrup[key] = { cantidad: 0, descripcion: v.descripcion };
+    if(!viajesAgrup[key]) viajesAgrup[key] = { cantidad: 0, descripcion: v.descripcion, tieneViajeAsignado: false };
     viajesAgrup[key].cantidad += Number(v.litros) || 0;
+    if(String(v.viaje || '').trim()) viajesAgrup[key].tieneViajeAsignado = true;
   });
 
   const keys = new Set([...Object.keys(cronoAgrup), ...Object.keys(viajesAgrup)]);
@@ -497,6 +498,7 @@ function cruzarCrono(){
     } else {
       const diff = Math.round((cantCrono - cantViajes) * 100) / 100;
       if(Math.abs(diff) > 0.05){ nivel = 'danger'; estado = 'Diferencia de cantidad'; }
+      else if(!v.tieneViajeAsignado){ nivel = 'warn'; estado = 'Material y cantidad OK, pero sin Nº de viaje asignado en la planilla'; }
       else { nivel = 'ok'; estado = 'OK'; }
     }
     resultados.push({
@@ -508,7 +510,7 @@ function cruzarCrono(){
     });
   });
 
-  const orden = { warn: 0, danger: 1, gray: 2, ok: 3 };
+  const orden = { danger: 0, warn: 1, gray: 2, ok: 3 };
   resultados.sort((a,b) => (orden[a.nivel] - orden[b.nivel]) || a.entrega.localeCompare(b.entrega));
   return resultados;
 }
@@ -517,19 +519,30 @@ function renderCrono(resultados){
   document.getElementById('cronoEmpty').style.display = 'none';
   document.getElementById('cronoResultsWrap').style.display = 'block';
 
-  const counts = { ok:0, warn:0, danger:0, gray:0 };
-  resultados.forEach(r => counts[r.nivel]++);
+  const counts = { ok:0, faltaWms:0, sinViaje:0, danger:0, gray:0 };
+  resultados.forEach(r => {
+    if(r.nivel === 'ok') counts.ok++;
+    else if(r.nivel === 'danger') counts.danger++;
+    else if(r.nivel === 'gray') counts.gray++;
+    else if(r.estado.startsWith('Falta en Viajes')) counts.faltaWms++;
+    else counts.sinViaje++;
+  });
   document.getElementById('cronoSummaryRow').innerHTML = `
     <span class="pill ok">✔ OK: ${counts.ok}</span>
-    <span class="pill warn">⚠ Falta en Viajes/WMS: ${counts.warn}</span>
     <span class="pill danger">✖ Diferencia cantidad: ${counts.danger}</span>
+    <span class="pill warn">⚠ Falta en Viajes/WMS: ${counts.faltaWms}</span>
+    <span class="pill warn">⚠ Sin Nº de viaje: ${counts.sinViaje}</span>
     <span class="pill gray">? No en CRONO: ${counts.gray}</span>
   `;
 
   const fmt = n => n == null ? '—' : n.toLocaleString('es-AR');
-  const cronoTag = { ok:['OK','ok'], warn:['FALTA WMS','warn'], danger:['DIFERENCIA','danger'], gray:['S/D','gray'] };
   document.getElementById('cronoResultsBody').innerHTML = resultados.map(r => {
-    const [label, cls] = cronoTag[r.nivel];
+    let label, cls = r.nivel;
+    if(r.nivel === 'ok'){ label = 'OK'; }
+    else if(r.nivel === 'danger'){ label = 'DIFERENCIA'; }
+    else if(r.nivel === 'gray'){ label = 'S/D'; }
+    else if(r.estado.startsWith('Falta en Viajes')){ label = 'FALTA WMS'; }
+    else { label = 'SIN Nº VIAJE'; }
     const viajeTxt = r.viajes && r.viajes.length ? r.viajes.join(', ') : '—';
     return `
     <tr class="row-${r.nivel}">
