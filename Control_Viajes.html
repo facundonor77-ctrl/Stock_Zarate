@@ -358,22 +358,40 @@ function fechaTs(v){
 
 // Busca un lote alternativo del mismo artículo, disponible, ordenado FIFO (por Fecha Alta más antigua)
 // que cubra la cantidad requerida. Excluye el lote que ya se controló.
-function sugerirLoteFifo(articulo, loteActual, requeridoUnidades, requeridoLitros, esperado){
+//
+// demandaPorArticulo: mapa { lote -> unidades comprometidas } con la demanda TOTAL
+// que cada lote ya tiene en la planilla de viajes (sumando todas sus deliveries),
+// para el mismo artículo. Antes de ofrecer un candidato como alternativa, se le
+// descuenta su propia demanda comprometida: un lote con 200 en WMS pero 80 ya
+// pedidas por otra delivery solo tiene 120 realmente libres para cubrir el faltante.
+function sugerirLoteFifo(articulo, loteActual, requeridoUnidades, requeridoLitros, esperado, demandaPorArticulo){
+  const demanda = demandaPorArticulo || {};
   const candidatos = wmsStock.filter(w =>
     normCodigo(w.codigo) === normCodigo(articulo) &&
     normLote(w.lote) !== loteActual &&
-    esDisponible(w.estado) &&
-    !esStaging(w.ubicacion)
+    (
+      (esDisponible(w.estado) && !esStaging(w.ubicacion)) ||
+      esStagingIn(w.ubicacion) // pendiente de guardar, pero ya cuenta como disponible
+    )
   );
   if(!candidatos.length) return null;
 
   const porLote = {};
   candidatos.forEach(w => {
     const lote = normLote(w.lote);
-    if(!porLote[lote]) porLote[lote] = { lote, cantidad: 0, faltaMin: Infinity };
-    porLote[lote].cantidad += Number(w.unidades) || 0;
+    if(!porLote[lote]) porLote[lote] = { lote, cantidadBruta: 0, faltaMin: Infinity, tieneStagingIn: false };
+    porLote[lote].cantidadBruta += Number(w.unidades) || 0;
+    if(esStagingIn(w.ubicacion)) porLote[lote].tieneStagingIn = true;
     const ts = fechaTs(w.falta);
     if(ts < porLote[lote].faltaMin) porLote[lote].faltaMin = ts;
+  });
+
+  // Descuenta del stock bruto de cada candidato su propia demanda ya comprometida
+  // en la planilla (por si ese mismo lote también está pedido por otra delivery).
+  Object.values(porLote).forEach(l => {
+    const comprometido = demanda[l.lote] || 0;
+    l.cantidad = Math.max(0, l.cantidadBruta - comprometido);
+    l.comprometido = comprometido;
   });
 
   // Suma la libre utilización en SAP (en el Centro/Almacén esperado) para cada lote candidato
@@ -659,8 +677,28 @@ function agruparDemandaPorLote(filas){
 }
 
 function cruzar(filas){
-  const base = filas || viajesRows;
-  const grupos = agruparDemandaPorLote(base);
+  // "mostrar" son las filas que este llamado necesita devolver (ej. solo las
+  // que matchean una búsqueda de Delivery). "universo" es SIEMPRE toda la
+  // sábana del día. La disponibilidad y la sugerencia FIFO de un lote deben
+  // calcularse contra el universo completo, nunca contra un subconjunto: si el
+  // lote 3031 está pedido por la delivery A (visible en "mostrar") y también
+  // por la delivery B (fuera de "mostrar", ej. no matchea la búsqueda), la
+  // demanda de B igual compromete el mismo stock físico y tiene que sumarse.
+  const mostrar = filas || viajesRows;
+  const universo = (typeof allViajesRows !== 'undefined' && allViajesRows && allViajesRows.length) ? allViajesRows : (viajesRows || mostrar);
+  const grupos = agruparDemandaPorLote(universo);
+
+  // Demanda total comprometida por lote, agrupada por artículo (sin separar por
+  // reserva): esto es lo que hay que descontarle al stock WMS de un lote cuando
+  // se lo evalúa como CANDIDATO alternativo, para no ofrecer stock que en
+  // realidad ya está pedido por otra delivery. Se agrupa por artículo+lote (y no
+  // solo por lote) porque el mismo número de lote podría repetirse entre
+  // artículos distintos. Se calcula sobre "universo" (toda la sábana del día).
+  const demandaPorArticuloLote = {}; // { articulo: { lote: unidades } }
+  universo.forEach(v => {
+    if(!demandaPorArticuloLote[v.articulo]) demandaPorArticuloLote[v.articulo] = {};
+    demandaPorArticuloLote[v.articulo][v.lote] = (demandaPorArticuloLote[v.articulo][v.lote] || 0) + (Number(v.unidades) || 0);
+  });
 
   // Resuelve disponibilidad UNA VEZ por lote agrupado (sumatoria de todas las
   // deliveries que lo piden), no por línea individual.
@@ -775,21 +813,24 @@ function cruzar(filas){
     {
       const reqUnidades = g.unidades;
       const reqLitros = g.litros;
-      const alt = sugerirLoteFifo(g.filas[0].articulo, g.lote, reqUnidades, reqLitros, esperado);
+      const alt = sugerirLoteFifo(g.filas[0].articulo, g.lote, reqUnidades, reqLitros, esperado, demandaPorArticuloLote[g.filas[0].articulo]);
       const esAlerta = (nivel === 'danger' || nivel === 'warn');
       if(alt){
         const cubreWms = alt.cantidad >= reqUnidades;
         const cubreSap = alt.sapLibre >= reqLitros;
         const prefijo = esAlerta ? '' : 'Backup: ';
+        const notaDescuento = alt.comprometido > 0
+          ? ` [${alt.cantidadBruta} bruto WMS, ya restadas ${alt.comprometido} comprometidas en otra(s) delivery(s) de este mismo lote]`
+          : '';
         if(cubreWms && cubreSap){
-          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp. WMS, ${alt.sapLibre.toFixed(0)} libre util. SAP — cubre el total del lote)`;
+          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp. neto WMS, ${alt.sapLibre.toFixed(0)} libre util. SAP — cubre el total del lote)${notaDescuento}`;
         } else if(cubreWms && !cubreSap){
-          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp. WMS, pero libre util. SAP insuficiente: ${alt.sapLibre.toFixed(0)})`;
+          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp. neto WMS, pero libre util. SAP insuficiente: ${alt.sapLibre.toFixed(0)})${notaDescuento}`;
         } else {
-          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp., no cubre el total del lote)`;
+          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp. neto, no cubre el total del lote)${notaDescuento}`;
         }
       } else if(esAlerta){
-        sugerencia = 'Sin alternativa disponible en WMS';
+        sugerencia = 'Sin alternativa disponible en WMS (considerando lo ya comprometido en otras deliveries)';
       }
       // si el lote está OK y no hay alternativa, se deja sin sugerencia (no hace falta plan B)
     }
@@ -802,8 +843,11 @@ function cruzar(filas){
     };
   });
 
-  // Aplica el resultado consolidado del lote a cada línea/delivery original.
-  const resultados = base.map(v => {
+  // Aplica el resultado consolidado del lote a cada línea/delivery que este
+  // llamado necesita devolver (puede ser toda la planilla, o un subconjunto
+  // como en el buscador por Delivery). El cálculo ya se hizo contra "universo"
+  // completo arriba; acá solo se proyecta al set de filas a mostrar.
+  const resultados = mostrar.map(v => {
     const key = v.lote + '|' + (v.reserva || '');
     const r = resueltoPorGrupo[key];
     return { ...v, ...r };
