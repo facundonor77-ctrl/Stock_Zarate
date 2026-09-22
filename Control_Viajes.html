@@ -319,6 +319,18 @@ function esStaging(ubicacion){
   return String(ubicacion || '').toUpperCase().includes('STAGING');
 }
 
+// Staging In: pallet ya está físico en planta pero pendiente de guardar en su
+// ubicación final. A diferencia de Staging Out (ya despachado, no cuenta), un
+// pallet en Staging In SÍ se puede usar para cubrir un viaje, aunque su estado
+// WMS todavía no diga "A DISPONIBLE".
+function esStagingIn(ubicacion){
+  return String(ubicacion || '').toUpperCase().includes('STAGING IN');
+}
+
+function esStagingOut(ubicacion){
+  return String(ubicacion || '').toUpperCase().includes('STAGING OUT');
+}
+
 // Chequeo exacto: solo "A DISPONIBLE" cuenta como apto para despachar.
 // (antes se usaba .includes('DISPONIBLE'), lo que también daba falso positivo
 // con un estado como "NO DISPONIBLE")
@@ -625,49 +637,86 @@ function almacenEsperado(reserva){
 /* =========================================================
    CRUCE
    ========================================================= */
+// Agrupa la demanda de un lote a través de TODAS las deliveries que lo piden
+// dentro de las filas dadas (ej. lote 3031 pedido por la delivery A y la B a
+// la vez). El cruce de disponibilidad se resuelve una sola vez por lote, contra
+// la sumatoria total, y ese resultado se aplica a cada línea/delivery de ese lote.
+// Se agrupa por lote+reserva (no solo por lote) porque la reserva define el
+// almacén esperado en SAP (almacenEsperado) — mezclar reservas distintas del
+// mismo lote sumaría requerido contra dos almacenes diferentes.
+function agruparDemandaPorLote(filas){
+  const grupos = {};
+  filas.forEach(v => {
+    const key = v.lote + '|' + (v.reserva || '');
+    if(!grupos[key]){
+      grupos[key] = { lote: v.lote, reserva: v.reserva, filas: [], unidades: 0, litros: 0 };
+    }
+    grupos[key].filas.push(v);
+    grupos[key].unidades += Number(v.unidades) || 0;
+    grupos[key].litros += Number(v.litros) || 0;
+  });
+  return grupos;
+}
+
 function cruzar(filas){
   const base = filas || viajesRows;
-  const resultados = base.map(v => {
-    const esperado = almacenEsperado(v.reserva);
+  const grupos = agruparDemandaPorLote(base);
+
+  // Resuelve disponibilidad UNA VEZ por lote agrupado (sumatoria de todas las
+  // deliveries que lo piden), no por línea individual.
+  const resueltoPorGrupo = {};
+  Object.keys(grupos).forEach(key => {
+    const g = grupos[key];
+    const esperado = almacenEsperado(g.reserva);
 
     // --- WMS ---
-    const wmsMatches = wmsStock.filter(w => normLote(w.lote) === v.lote);
+    const wmsMatches = wmsStock.filter(w => normLote(w.lote) === g.lote);
     let wmsEstado = 'no_encontrado';
     let wmsDetalle = 'Lote no está en el WMS';
     let wmsNaves = '—';
+    let hayStagingIn = false;
     if(wmsMatches.length){
-      const enStaging = wmsMatches.filter(w => esStaging(w.ubicacion));
-      const disponibles = wmsMatches.filter(w => esDisponible(w.estado) && !esStaging(w.ubicacion));
+      const enStagingOut = wmsMatches.filter(w => esStagingOut(w.ubicacion));
+      const enStagingIn = wmsMatches.filter(w => esStagingIn(w.ubicacion));
+      // Disponible = estado "A DISPONIBLE" fuera de staging, MÁS lo que está en
+      // Staging In (ya está físico en planta, pendiente de guardar nada más).
+      const disponiblesNormal = wmsMatches.filter(w => esDisponible(w.estado) && !esStaging(w.ubicacion));
       const bloqueados = wmsMatches.filter(w => !esStaging(w.ubicacion) && !esDisponible(w.estado));
-      const sumDisponible = disponibles.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
-      const sumStaging = enStaging.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
+      const sumDisponibleNormal = disponiblesNormal.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
+      const sumStagingIn = enStagingIn.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
+      const sumDisponible = sumDisponibleNormal + sumStagingIn;
+      const sumStagingOut = enStagingOut.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
       const sumBloqueado = bloqueados.reduce((acc,w) => acc + (Number(w.unidades) || 0), 0);
-      const requerido = Number(v.unidades) || 0;
+      const requerido = g.unidades;
+      hayStagingIn = sumStagingIn > 0;
 
       if(sumDisponible >= requerido){
         wmsEstado = 'disponible';
         const notas = [];
         if(sumBloqueado) notas.push(`${sumBloqueado} unid. bloqueadas en otro pallet`);
-        if(sumStaging) notas.push(`${sumStaging} unid. ya despachadas en Staging Out`);
+        if(sumStagingOut) notas.push(`${sumStagingOut} unid. ya despachadas en Staging Out`);
+        if(sumStagingIn) notas.push(`${sumStagingIn} unid. en Staging In — pendiente de guardar`);
         wmsDetalle = notas.length
-          ? `${sumDisponible} disponibles (alcanza) — ${notas.join(', ')}, no afecta el viaje`
+          ? `${sumDisponible} disponibles (alcanza) — ${notas.join(', ')}`
           : `${sumDisponible} disponibles`;
       } else {
         wmsEstado = 'insuficiente';
         const notas = [];
         if(sumBloqueado) notas.push(`${sumBloqueado} unid. bloqueadas: ${bloqueados[0].estado}`);
-        if(sumStaging) notas.push(`${sumStaging} unid. ya despachadas en Staging Out (no cuentan)`);
+        if(sumStagingOut) notas.push(`${sumStagingOut} unid. ya despachadas en Staging Out (no cuentan)`);
+        if(sumStagingIn) notas.push(`${sumStagingIn} unid. en Staging In (ya cuentan, pendiente de guardar)`);
         wmsDetalle = `Solo ${sumDisponible} disponibles de ${requerido} requeridas` +
           (notas.length ? ` (${notas.join(', ')})` : '');
       }
 
-      // Nave: se calcula sobre todos los pallets del lote (disponibles + bloqueados), excluyendo STAGING
+      // Nave: se calcula sobre todos los pallets del lote (disponibles + bloqueados + staging in), excluyendo STAGING OUT
       const naveCounts = {};
       wmsMatches.forEach(w => {
+        if(esStagingOut(w.ubicacion)) return; // ya despachado, no ocupa nave a efectos del viaje
         const ubic = String(w.ubicacion || '');
         const parts = ubic.split('-');
         const nave = parts.length >= 3 ? parts[0] : ubic;
-        if(nave.toUpperCase().includes('STAGING')) return; // se excluye staging out/in del conteo por nave
+        if(nave.toUpperCase().includes('STAGING')) return; // staging in tampoco cuenta como "nave física"
         naveCounts[nave] = (naveCounts[nave] || 0) + 1;
       });
       const naves = Object.keys(naveCounts).sort();
@@ -675,13 +724,13 @@ function cruzar(filas){
     }
 
     // --- SAP ---
-    const sapEnAlmacenEsperado = sapRows.filter(s => s.lote === v.lote && s.centro === esperado.centro && s.almacen === esperado.almacen);
-    const sapEnOtroLado = sapRows.filter(s => s.lote === v.lote);
+    const sapEnAlmacenEsperado = sapRows.filter(s => s.lote === g.lote && s.centro === esperado.centro && s.almacen === esperado.almacen);
+    const sapEnOtroLado = sapRows.filter(s => s.lote === g.lote);
     let sapEstado, sapDetalle, libreUtiliz = 0;
 
     if(sapEnAlmacenEsperado.length){
       libreUtiliz = sapEnAlmacenEsperado.reduce((acc,s)=>acc+s.libreUtiliz,0);
-      if(libreUtiliz >= v.litros){
+      if(libreUtiliz >= g.litros){
         sapEstado = 'ok';
         sapDetalle = `Centro ${esperado.centro} / Almacén ${esperado.almacen}`;
       } else {
@@ -709,27 +758,35 @@ function cruzar(filas){
       nivel = 'warn'; motivo = sapDetalle;
     } else {
       nivel = 'ok'; motivo = 'Lote disponible en WMS y en libre utilización en el almacén correcto';
+      if(hayStagingIn) motivo += ' — parte del stock está en Staging In, pendiente de guardar';
+    }
+    // La advertencia de Staging In no baja de nivel un lote que ya está OK
+    // (el pallet SÍ se puede usar), pero si el lote total está en alerta, el
+    // aviso de Staging In queda igual dentro del detalle de wmsDetalle/motivo.
+    if(hayStagingIn && nivel === 'ok'){
+      // se deja nivel 'ok' — la advertencia va solo en el texto, no cambia el semáforo,
+      // pero se marca aparte para que la fila lo pueda destacar visualmente si hace falta.
     }
 
     // --- Sugerencia de lote alternativo (FIFO), validada en WMS y SAP ---
-    // Se calcula siempre (no solo en alerta) para tener un "plan B" a mano ante
-    // una rotura imprevista o un pallet que no aparece físicamente al armar el viaje.
+    // Se calcula UNA VEZ por lote agrupado, contra el faltante real de la suma
+    // (demanda total del lote entre todas sus deliveries), no por línea suelta.
     let sugerencia = null;
     {
-      const reqUnidades = Number(v.unidades) || 0;
-      const reqLitros = Number(v.litros) || 0;
-      const alt = sugerirLoteFifo(v.articulo, v.lote, reqUnidades, reqLitros, esperado);
+      const reqUnidades = g.unidades;
+      const reqLitros = g.litros;
+      const alt = sugerirLoteFifo(g.filas[0].articulo, g.lote, reqUnidades, reqLitros, esperado);
       const esAlerta = (nivel === 'danger' || nivel === 'warn');
       if(alt){
         const cubreWms = alt.cantidad >= reqUnidades;
         const cubreSap = alt.sapLibre >= reqLitros;
         const prefijo = esAlerta ? '' : 'Backup: ';
         if(cubreWms && cubreSap){
-          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp. WMS, ${alt.sapLibre.toFixed(0)} libre util. SAP — cubre el viaje)`;
+          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp. WMS, ${alt.sapLibre.toFixed(0)} libre util. SAP — cubre el total del lote)`;
         } else if(cubreWms && !cubreSap){
           sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp. WMS, pero libre util. SAP insuficiente: ${alt.sapLibre.toFixed(0)})`;
         } else {
-          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp., no cubre todo)`;
+          sugerencia = `${prefijo}Lote ${alt.lote} (${alt.cantidad} disp., no cubre el total del lote)`;
         }
       } else if(esAlerta){
         sugerencia = 'Sin alternativa disponible en WMS';
@@ -737,7 +794,19 @@ function cruzar(filas){
       // si el lote está OK y no hay alternativa, se deja sin sugerencia (no hace falta plan B)
     }
 
-    return { ...v, esperado, wmsEstado, wmsDetalle, wmsNaves, sapEstado, sapDetalle, libreUtiliz, nivel, motivo, sugerencia };
+    resueltoPorGrupo[key] = {
+      esperado, wmsEstado, wmsDetalle, wmsNaves, hayStagingIn,
+      sapEstado, sapDetalle, libreUtiliz, nivel, motivo, sugerencia,
+      demandaTotalUnidades: g.unidades, demandaTotalLitros: g.litros,
+      cantDeliveries: new Set(g.filas.map(f => f.delivery)).size,
+    };
+  });
+
+  // Aplica el resultado consolidado del lote a cada línea/delivery original.
+  const resultados = base.map(v => {
+    const key = v.lote + '|' + (v.reserva || '');
+    const r = resueltoPorGrupo[key];
+    return { ...v, ...r };
   });
   return resultados;
 }
@@ -767,22 +836,31 @@ function render(resultados){
   `;
 
   const body = document.getElementById('resultsBody');
-  body.innerHTML = resultados.map(r => `
+  body.innerHTML = resultados.map(r => {
+    const repartido = r.cantDeliveries > 1;
+    const loteCell = repartido
+      ? `${r.lote}<br><span class="motivo" style="color:var(--accent2);">Σ ${r.cantDeliveries} deliveries — ${r.demandaTotalUnidades} unid. / ${r.demandaTotalLitros} L total</span>`
+      : r.lote;
+    const stagingTag = r.hayStagingIn
+      ? `<br><span class="tag warn" style="margin-top:4px;">STAGING IN</span>`
+      : '';
+    return `
     <tr class="row-${r.nivel}">
       <td>${r.viaje}</td>
       <td>${r.delivery}</td>
-      <td>${r.lote}</td>
+      <td>${loteCell}</td>
       <td>${r.sugerencia ? `<span class="motivo" style="color:${r.sugerencia.startsWith('Backup:') ? 'var(--sub)' : 'var(--accent2)'};">${r.sugerencia}</span>` : '—'}</td>
       <td>${r.articulo}<br><span class="motivo">${r.descripcion}</span></td>
       <td>${r.reserva}</td>
       <td>${r.litros}</td>
-      <td>${r.wmsEstado === 'disponible' ? 'Disponible' : (r.wmsEstado==='insuficiente' ? 'Insuficiente' : 'No encontrado')}</td>
+      <td>${r.wmsEstado === 'disponible' ? 'Disponible' : (r.wmsEstado==='insuficiente' ? 'Insuficiente' : 'No encontrado')}${stagingTag}</td>
       <td>${r.wmsNaves}</td>
       <td>C${r.esperado.centro}/A${r.esperado.almacen}</td>
       <td>${r.libreUtiliz.toFixed(0)}</td>
       <td>${tagFor(r.nivel)}<br><span class="motivo">${r.motivo}</span></td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
   window.__ultimoResultado = resultados;
 }
@@ -808,6 +886,10 @@ function descargarExcel(){
     'Almacén esperado': r.esperado.almacen,
     'SAP libre utilización': r.libreUtiliz,
     'SAP detalle': r.sapDetalle,
+    'Deliveries del lote': r.cantDeliveries,
+    'Demanda total lote (unid.)': r.demandaTotalUnidades,
+    'Demanda total lote (litros)': r.demandaTotalLitros,
+    'Staging In': r.hayStagingIn ? 'Sí — pendiente de guardar' : '',
     'Resultado': r.nivel.toUpperCase(),
     'Motivo': r.motivo,
     'Sugerencia FIFO': r.sugerencia || '',
@@ -906,22 +988,31 @@ function buscarPorDelivery(){
     return;
   }
 
-  body.innerHTML = resultados.map(r => `
+  body.innerHTML = resultados.map(r => {
+    const repartido = r.cantDeliveries > 1;
+    const loteCell = repartido
+      ? `${r.lote}<br><span class="motivo" style="color:var(--accent2);">Σ ${r.cantDeliveries} deliveries — ${r.demandaTotalUnidades} unid. / ${r.demandaTotalLitros} L total</span>`
+      : r.lote;
+    const stagingTag = r.hayStagingIn
+      ? `<br><span class="tag warn" style="margin-top:4px;">STAGING IN</span>`
+      : '';
+    return `
     <tr class="row-${r.nivel}">
       <td>${r.viaje || '—'}</td>
       <td>${r.delivery || '—'}</td>
-      <td>${r.lote}</td>
+      <td>${loteCell}</td>
       <td>${r.sugerencia ? `<span class="motivo" style="color:${r.sugerencia.startsWith('Backup:') ? 'var(--sub)' : 'var(--accent2)'};">${r.sugerencia}</span>` : '—'}</td>
       <td>${r.articulo}<br><span class="motivo">${r.descripcion}</span></td>
       <td>${r.reserva}</td>
       <td>${r.litros}</td>
-      <td>${r.wmsEstado === 'disponible' ? 'Disponible' : (r.wmsEstado==='insuficiente' ? 'Insuficiente' : 'No encontrado')}</td>
+      <td>${r.wmsEstado === 'disponible' ? 'Disponible' : (r.wmsEstado==='insuficiente' ? 'Insuficiente' : 'No encontrado')}${stagingTag}</td>
       <td>${r.wmsNaves}</td>
       <td>C${r.esperado.centro}/A${r.esperado.almacen}</td>
       <td>${r.libreUtiliz.toFixed(0)}</td>
       <td>${tagFor(r.nivel)}<br><span class="motivo">${r.motivo}</span></td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 document.getElementById('deliverySearchInput').addEventListener('input', buscarPorDelivery);
