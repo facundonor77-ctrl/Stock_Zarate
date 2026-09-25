@@ -207,7 +207,7 @@
 
   <div class="card" id="cronoCard">
     <h2>3. Control CRONO vs Viajes (Material y Cantidad)</h2>
-    <p class="hint">Control diario aparte: cruza el archivo del 4PL (CRONO / ZA02) contra la planilla de viajes ya cargada arriba, por Entrega+Material, para detectar entregas que no coinciden en material o cantidad. No usa SAP ni el stock WMS.</p>
+    <p class="hint">Control diario aparte: cruza el archivo del 4PL (CRONO / ZA02) contra la planilla de viajes ya cargada arriba. Primero controla el total de litros por Delivery, y después el detalle por Entrega+Material (material y cantidad). No usa SAP ni el stock WMS.</p>
     <div class="uploadRow">
       <div class="uploadBox">
         <label>Archivo CRONO / ZA02 (.xlsx)</label>
@@ -227,7 +227,28 @@
       </select>
     </div>
 
-    <div id="cronoResultsWrap" style="display:none; margin-top:14px;">
+    <div id="litrosDeliveryWrap" style="display:none; margin-top:14px;">
+      <div style="font-size:12px; font-weight:700; color:var(--text); margin:4px 0 8px 0;">Litros totales por Delivery</div>
+      <div class="summaryRow" id="litrosDeliverySummaryRow"></div>
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Viaje</th>
+              <th>Entrega</th>
+              <th>Litros CRONO</th>
+              <th>Litros Viajes</th>
+              <th>Diferencia</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="litrosDeliveryBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="cronoResultsWrap" style="display:none; margin-top:18px;">
+      <div style="font-size:12px; font-weight:700; color:var(--text); margin:4px 0 8px 0;">Detalle por Entrega + Material</div>
       <div class="summaryRow" id="cronoSummaryRow"></div>
       <div class="tableWrap">
         <table>
@@ -247,7 +268,7 @@
         </table>
       </div>
       <div class="actionsRow">
-        <button class="primary" id="downloadCronoBtn">⬇️ Descargar Excel</button>
+        <button class="primary" id="downloadCronoBtn">⬇️ Descargar Excel (2 hojas)</button>
       </div>
     </div>
     <div class="hint" id="cronoEmpty" style="margin-top:10px;">Subí la planilla de viajes (arriba) y el archivo CRONO, después tocá "Cruzar CRONO vs Viajes".</div>
@@ -545,6 +566,104 @@ function cruzarCrono(){
   return resultados;
 }
 
+/* =========================================================
+   RESUMEN LITROS TOTALES POR DELIVERY (CRONO vs Viajes)
+   Igual que cruzarCrono() pero agrupando solo por Entrega,
+   sumando TODOS los materiales de esa entrega. Chequeo rápido
+   de litros totales, aparte del detalle por Entrega+Material.
+   ========================================================= */
+function resumenLitrosPorDelivery(){
+  const cronoViajeMap = {};
+  cronoRows.forEach(r => {
+    if(!r.viaje) return;
+    if(!cronoViajeMap[r.entrega]) cronoViajeMap[r.entrega] = new Set();
+    cronoViajeMap[r.entrega].add(r.viaje);
+  });
+  const entregaViajeMap = {};
+  allViajesRows.forEach(v => {
+    const entrega = extraerEntregaNum(v.delivery);
+    const viaje = String(v.viaje || '').trim();
+    if(!entrega || !viaje) return;
+    if(!entregaViajeMap[entrega]) entregaViajeMap[entrega] = new Set();
+    entregaViajeMap[entrega].add(viaje);
+  });
+
+  const cronoPorEntrega = {};
+  cronoRows.forEach(r => {
+    cronoPorEntrega[r.entrega] = (cronoPorEntrega[r.entrega] || 0) + r.cantidad;
+  });
+  const viajesPorEntrega = {};
+  allViajesRows.forEach(v => {
+    const entrega = extraerEntregaNum(v.delivery);
+    if(!entrega) return;
+    viajesPorEntrega[entrega] = (viajesPorEntrega[entrega] || 0) + (Number(v.litros) || 0);
+  });
+
+  const entregas = new Set([...Object.keys(cronoPorEntrega), ...Object.keys(viajesPorEntrega)]);
+  const resultados = [];
+  entregas.forEach(entrega => {
+    const litrosCrono = cronoPorEntrega[entrega] != null ? cronoPorEntrega[entrega] : null;
+    const litrosViajes = viajesPorEntrega[entrega] != null ? viajesPorEntrega[entrega] : null;
+    const viajesDeEstaEntrega = cronoViajeMap[entrega] ? [...cronoViajeMap[entrega]].sort()
+      : (entregaViajeMap[entrega] ? [...entregaViajeMap[entrega]].sort() : []);
+    let nivel, estado;
+    if(litrosCrono != null && litrosViajes == null){
+      nivel = 'warn'; estado = 'Falta en Viajes/WMS';
+    } else if(litrosCrono == null && litrosViajes != null){
+      nivel = 'gray'; estado = 'No presente en CRONO';
+    } else {
+      const diff = Math.round((litrosCrono - litrosViajes) * 100) / 100;
+      if(Math.abs(diff) > 0.05){ nivel = 'danger'; estado = 'Diferencia de litros'; }
+      else { nivel = 'ok'; estado = 'OK'; }
+    }
+    resultados.push({
+      entrega, viajes: viajesDeEstaEntrega,
+      litrosCrono, litrosViajes,
+      diferencia: (litrosCrono != null && litrosViajes != null) ? Math.round((litrosCrono - litrosViajes) * 100) / 100 : null,
+      nivel, estado,
+    });
+  });
+
+  const orden2 = { danger: 0, warn: 1, gray: 2, ok: 3 };
+  resultados.sort((a,b) => (orden2[a.nivel] - orden2[b.nivel]) || a.entrega.localeCompare(b.entrega));
+  return resultados;
+}
+
+function renderResumenLitros(resultados){
+  document.getElementById('litrosDeliveryWrap').style.display = 'block';
+
+  const counts = { ok:0, danger:0, warn:0, gray:0 };
+  resultados.forEach(r => counts[r.nivel]++);
+  document.getElementById('litrosDeliverySummaryRow').innerHTML = `
+    <span class="pill ok">✔ OK: ${counts.ok}</span>
+    <span class="pill danger">✖ Diferencia litros: ${counts.danger}</span>
+    <span class="pill warn">⚠ Falta en Viajes/WMS: ${counts.warn}</span>
+    <span class="pill gray">? No en CRONO: ${counts.gray}</span>
+  `;
+
+  const fmt = n => n == null ? '—' : n.toLocaleString('es-AR');
+  document.getElementById('litrosDeliveryBody').innerHTML = resultados.map(r => {
+    let label;
+    if(r.nivel === 'ok') label = 'OK';
+    else if(r.nivel === 'danger') label = 'DIFERENCIA';
+    else if(r.nivel === 'gray') label = 'S/D';
+    else label = 'FALTA WMS';
+    const viajeTxt = r.viajes && r.viajes.length ? r.viajes.join(', ') : '—';
+    return `
+    <tr class="row-${r.nivel}">
+      <td>${viajeTxt}</td>
+      <td>${r.entrega}</td>
+      <td>${fmt(r.litrosCrono)}</td>
+      <td>${fmt(r.litrosViajes)}</td>
+      <td>${r.diferencia == null ? '—' : r.diferencia}</td>
+      <td><span class="tag ${r.nivel}">${label}</span><br><span class="motivo">${r.estado}</span></td>
+    </tr>
+  `;
+  }).join('');
+
+  window.__ultimoResumenLitros = resultados;
+}
+
 function renderCrono(resultados){
   document.getElementById('cronoEmpty').style.display = 'none';
   document.getElementById('cronoResultsWrap').style.display = 'block';
@@ -616,11 +735,30 @@ function aplicarFiltroCrono(){
     filtrados = completos.filter(r => (r.viajes || []).includes(val));
   }
   renderCrono(filtrados);
+
+  const resumenCompletos = window.__resumenLitrosCompletos || [];
+  let resumenFiltrados = resumenCompletos;
+  if(val === '__SIN_VIAJE__'){
+    resumenFiltrados = resumenCompletos.filter(r => !r.viajes || !r.viajes.length);
+  } else if(val !== '__ALL__'){
+    resumenFiltrados = resumenCompletos.filter(r => (r.viajes || []).includes(val));
+  }
+  renderResumenLitros(resumenFiltrados);
 }
 
 document.getElementById('cronoViajeSelector').addEventListener('change', aplicarFiltroCrono);
 
 function descargarExcelCrono(){
+  const resumenLitros = window.__ultimoResumenLitros || [];
+  const dataResumen = resumenLitros.map(r => ({
+    'Viaje': r.viajes && r.viajes.length ? r.viajes.join(', ') : '',
+    'Entrega': r.entrega,
+    'Litros CRONO': r.litrosCrono,
+    'Litros Viajes': r.litrosViajes,
+    'Diferencia': r.diferencia,
+    'Estado': r.estado,
+  }));
+
   const resultados = window.__ultimoResultadoCrono || [];
   const data = resultados.map(r => ({
     'Viaje': r.viajes && r.viajes.length ? r.viajes.join(', ') : '',
@@ -632,9 +770,12 @@ function descargarExcelCrono(){
     'Diferencia': r.diferencia,
     'Estado': r.estado,
   }));
-  const ws = XLSX.utils.json_to_sheet(data);
+
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Control CRONO vs Viajes');
+  const wsResumen = XLSX.utils.json_to_sheet(dataResumen);
+  XLSX.utils.book_append_sheet(wb, wsResumen, 'Litros por Delivery');
+  const ws = XLSX.utils.json_to_sheet(data);
+  XLSX.utils.book_append_sheet(wb, ws, 'Detalle Entrega+Material');
   const fecha = new Date().toISOString().slice(0,10);
   XLSX.writeFile(wb, `control_crono_vs_viajes_${fecha}.xlsx`);
 }
@@ -1124,6 +1265,10 @@ document.getElementById('runCronoBtn').addEventListener('click', () => {
   poblarSelectorCrono(resultados);
   document.getElementById('cronoViajeSelector').value = '__ALL__';
   renderCrono(resultados);
+
+  const resumenLitros = resumenLitrosPorDelivery();
+  window.__resumenLitrosCompletos = resumenLitros;
+  renderResumenLitros(resumenLitros);
 });
 
 document.getElementById('downloadCronoBtn').addEventListener('click', descargarExcelCrono);
